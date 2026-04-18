@@ -1,0 +1,10 @@
+node_modules/
+bun.lockb
+*.log
+seen.db
+seen.db-*
+pending.json
+.env
+.env.*
+coverage/
+.DS_Store

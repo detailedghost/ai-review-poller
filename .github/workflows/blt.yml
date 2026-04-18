@@ -1,0 +1,88 @@
+---
+name: BLT
+
+on:
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+
+concurrency:
+  group: blt-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  blt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install system tools (ripgrep)
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bunx tsc --noEmit
+
+      - name: Lint + format check (biome)
+        run: bunx biome check src tests
+
+      - name: Unit + integration tests with coverage
+        env:
+          REVIEW_LOOP_POLLER_STATE_DIR: /tmp/claude/review-loop-poller-ci
+        run: |
+          mkdir -p "$REVIEW_LOOP_POLLER_STATE_DIR"
+          bun test --coverage --coverage-reporter=lcov --coverage-reporter=text
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: warn
+
+      - name: Compile binary
+        env:
+          REVIEW_LOOP_POLLER_BIN: ${{ github.workspace }}/dist/review-loop-poller
+          REVIEW_LOOP_POLLER_SRC: ${{ github.workspace }}
+        run: |
+          mkdir -p dist
+          ./build.sh
+          test -x "$REVIEW_LOOP_POLLER_BIN"
+          file "$REVIEW_LOOP_POLLER_BIN"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-loop-poller-linux-x64
+          path: dist/review-loop-poller
+          if-no-files-found: error
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject committed tokens or personal paths
+        run: |-
+          set -e
+          if grep -R -n -E 'ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{35}|AKIA[0-9A-Z]{16}' \
+               --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.vale .; then
+            echo "::error::secret-shaped string found in tree"
+            exit 1
+          fi
+          if grep -R -n -E '/home/[a-z0-9_-]+/' \
+               --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.vale \
+               --exclude-dir=coverage --exclude-dir=dist .; then
+            echo "::error::hard-coded home path found in tree"
+            exit 1
+          fi
