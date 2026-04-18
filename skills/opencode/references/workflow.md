@@ -10,7 +10,8 @@ derives from the PR on each invocation.
 
 IN: raw invocation string, environment.
 OUT: `maxRounds` (int), `skip` (`bool`), `where` (`bool`),
-`retrigger` (`bool`, default `true`).
+`retrigger` (`bool`, default `true`), `auto` (`bool`, default `false`),
+`waitTimeout` (int seconds, default `1800`).
 
 - `--rounds N` → `maxRounds = N` (reject values < 1).
 - `--skip` → `skip = true`.
@@ -19,6 +20,11 @@ OUT: `maxRounds` (int), `skip` (`bool`), `where` (`bool`),
   Copilot re-request after `/address` completes — the round still
   runs, but the skill will not bounce another review. Equivalent to
   `--rounds <roundsDone+1>`, but explicit.
+- `--auto` → `auto = true`. Engages Phase 8 (Auto Loop).
+- `--wait-timeout <sec>` → `waitTimeout = <sec>` (reject values < 1).
+- Reject `--auto` combined with `--no-retrigger`: print
+  `review-loop: --auto and --no-retrigger are mutually exclusive` and
+  exit 2.
 
 `maxRounds` resolution when `--rounds` is omitted: read
 `REVIEW_LOOP_MAX_ROUNDS` from the environment; when set to a positive
@@ -303,24 +309,84 @@ OUT: terminal.
 
 1. When `roundsDone + 1 < maxRounds`:
 
+   - Capture `sinceIso = now()` (ISO-8601 UTC).
+
    - `address-helper.sh request-copilot`.
 
-   - Print:
+   - When `auto == true`: proceed to Phase 8 with `sinceIso` in hand.
+     Do not exit.
+
+   - Otherwise print:
 
      ```text
      review-loop: round <N> complete. Copilot re-review requested.
      Re-run /review-loop when it lands.
      ```
 
-1. Otherwise, print:
+     and exit 0.
+
+1. Otherwise (`roundsDone + 1 >= maxRounds`), print:
 
    ```text
    review-loop: final round (<N>/<maxRounds>) complete. Not re-requesting.
    ```
 
-1. Exit 0.
+   and exit 0 regardless of `auto`.
 
-GATE: printed summary, exited.
+GATE: printed summary, exited — unless auto-mode handed off to Phase 8.
+
+## Phase 8 — Auto Loop
+
+IN: `auto == true`, `waitTimeout`, `prUrl`, `sinceIso` from Phase 7's
+`request-copilot` call, current `roundsDone`, `maxRounds`.
+OUT: terminal after all rounds or first hard error.
+
+Runs only when auto-mode is on. Replaces the normal Phase 7 exit with
+a wait-then-continue loop.
+
+1. Before the first round in an `--auto` invocation, verify the
+   poller is installed: `pending.json` exists under
+   `${REVIEW_LOOP_POLLER_STATE_DIR:-/tmp/claude/review-loop-poller}`
+   AND `crontab -l` contains `# BEGIN review-loop-poller`. When either
+   is missing, print:
+
+   ```text
+   review-loop: --auto requires the poller to be installed.
+   Install it → $HOME/code/ai-review-poller/run.sh --install
+   ```
+
+   and exit 2 before firing any Copilot request.
+
+1. After Phase 7's `request-copilot`, run:
+
+   ```text
+   address-helper.sh wait-for-copilot <prUrl> <sinceIso> --timeout=<waitTimeout>
+   ```
+
+   - exit 0 → a Copilot review with `submittedAt > sinceIso` has been
+     observed in `pending.json`. Fall through to step 3.
+
+   - exit 124 → timeout. Print:
+
+     ```text
+     review-loop: auto wait timed out after <M> min without a new
+     Copilot review. Re-run /review-loop --auto to resume.
+     ```
+
+     and exit 0.
+
+   - exit 2 → state file disappeared mid-run. Print the install tip
+     from step 1 and exit 2.
+
+1. Re-enter Phase 2 — read `count-copilot-reviews` into a fresh
+   `roundsDone`. The existing Phase 2 gate (`roundsDone >= maxRounds`)
+   fires the normal "max rounds reached" summary and exits when the
+   cap is hit.
+
+1. Continue through Phases 3–7 for the new round. When Phase 7
+   re-enters auto-mode, go back to step 2 of this phase.
+
+GATE: round cap hit, wait timeout, or hard error.
 
 ## Error Handling Summary
 
