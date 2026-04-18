@@ -18,7 +18,12 @@ checked-out pull request:
 1. Filter each Copilot comment through the `copilot-antagonist` agent
    (see `references/antagonist-prompt.md` in the source repository)
    and route accepted items to `/address`.
-1. Cap at three rounds by default (`--rounds N` to override).
+1. Cap at three rounds by default (`--rounds N` to override, or set
+   `REVIEW_LOOP_MAX_ROUNDS` in the environment).
+1. After `/address` completes a round, automatically re-request a
+   Copilot review (Phase 7 of the workflow) until the round cap is
+   hit. Pass `--no-retrigger` to run a single round without kicking
+   off another review cycle.
 
 ## Companion commands
 

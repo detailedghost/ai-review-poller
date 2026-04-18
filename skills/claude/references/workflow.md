@@ -8,12 +8,23 @@ derives from the PR on each invocation.
 
 ## Phase 0 — Argument Parsing
 
-IN: raw invocation string.
-OUT: `maxRounds` (int, default `3`), `skip` (`bool`), `where` (`bool`).
+IN: raw invocation string, environment.
+OUT: `maxRounds` (int), `skip` (`bool`), `where` (`bool`),
+`retrigger` (`bool`, default `true`).
 
 - `--rounds N` → `maxRounds = N` (reject values < 1).
 - `--skip` → `skip = true`.
 - `--where` → `where = true`.
+- `--no-retrigger` → `retrigger = false`. Disables the Phase 7
+  Copilot re-request after `/address` completes — the round still
+  runs, but the skill will not bounce another review. Equivalent to
+  `--rounds <roundsDone+1>`, but explicit.
+
+`maxRounds` resolution when `--rounds` is omitted: read
+`REVIEW_LOOP_MAX_ROUNDS` from the environment; when set to a positive
+integer, use it. Otherwise default to `3`. Setting
+`REVIEW_LOOP_MAX_ROUNDS=1` effectively disables auto-retrigger without
+a flag on every invocation.
 
 When `skip` equals `true`: print `review-loop: skipped` and exit 0.
 
@@ -278,6 +289,17 @@ The round does **not** count as consumed (no Copilot re-trigger).
 
 IN: successful /address (or empty filtered array).
 OUT: terminal.
+
+1. When `retrigger == false`:
+
+   - Print:
+
+     ```text
+     review-loop: round <N> complete. Auto-retrigger disabled (--no-retrigger).
+     Re-run /review-loop manually to continue.
+     ```
+
+   - Skip the re-request and exit 0.
 
 1. When `roundsDone + 1 < maxRounds`:
 

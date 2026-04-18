@@ -16,13 +16,23 @@ Run this on the branch of an open PR. The skill is **stateless and
 fire-and-forget**: each invocation does one step of the round. re-invoke
 after Copilot posts a new review.
 
-**Usage:** `/review-loop [--rounds N] [--skip] [--where]`
+**Usage:** `/review-loop [--rounds N] [--no-retrigger] [--skip] [--where]`
 
 | Flag | Effect |
 |------|--------|
-| `--rounds N` | Override the default 3-round cap. |
+| `--rounds N` | Override the default 3-round cap. Also settable via `REVIEW_LOOP_MAX_ROUNDS`. |
+| `--no-retrigger` | Run the round but skip the Copilot re-request at the end. Useful when you want `/address` to apply fixes without kicking off another review cycle. |
 | `--skip` | No-op exit. Use when /create-spec auto-invokes this and you want to bail out. |
 | `--where` | Print pending Copilot reviews from the poller's state file and exit. No git or Copilot calls. |
+
+### Auto-retrigger
+
+After `/address` completes a round, the skill automatically asks
+Copilot for a new review (Phase 7) — you don't re-type anything. The
+loop caps at `--rounds N` (default 3), so after the final round the
+re-request is suppressed. Turn it off entirely with `--no-retrigger`
+on a single invocation, or set `REVIEW_LOOP_MAX_ROUNDS=1` in your
+shell to stop re-triggering by default.
 
 ## Reference Files (lazy-load)
 
