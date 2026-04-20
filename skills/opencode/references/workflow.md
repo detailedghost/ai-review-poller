@@ -155,12 +155,17 @@ Branches below execute based on this decision.
 
 ### 3a. Action `trigger`
 
-1. `address-helper.sh request-copilot`.
+1. `address-helper.sh request-copilot`. Internally this posts an
+   `@copilot review` comment on the PR (not a `requested_reviewers`
+   API call). The comment-based trigger works even on repositories
+   where the Copilot GitHub App isn't wired up to accept review
+   requests, and Copilot still posts a review authored by
+   `copilot-pull-request-reviewer` — which is what the poller watches.
 
 1. Print:
 
    ```text
-   review-loop: Copilot review requested (round 1 of <maxRounds>).
+   review-loop: Copilot review requested via @copilot comment (round 1 of <maxRounds>).
    Re-run /review-loop when the review is posted.
    ```
 
@@ -398,6 +403,6 @@ GATE: round cap hit, wait timeout, or hard error.
 | Max rounds reached | Exit 0 with summary |
 | Antagonist returned malformed JSON | Exit 1, print raw output |
 | `/address` failed | Exit 1, no re-trigger — round not consumed |
-| `request-copilot` returns already-pending | Treated as success |
+| `request-copilot` posts a duplicate `@copilot review` comment | Treated as success (Copilot ignores repeat triggers without new commits) |
 | `--where` with missing state file | Exit 0 with install tip |
 | `--where` with malformed `pending.json` | Exit 1 with message |
