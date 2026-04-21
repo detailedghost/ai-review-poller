@@ -144,3 +144,58 @@ describe("poller integration — missing state dir", () => {
 		expect(pending).not.toBeNull();
 	});
 });
+
+describe("poller integration — no-findings acks", () => {
+	test("ack from provider lands in pending.acks and does not inflate count", async () => {
+		const cfg = makeConfig(stateDir);
+		const provider = fakeProvider([], {
+			[PR_URL]: [
+				{
+					commentId: 9001,
+					createdAt: NOW,
+					authorLogin: "copilot-swe-agent",
+					bodyExcerpt: "No additional code changes were needed",
+				},
+			],
+		});
+		await withFakeProvider(provider, async () => {
+			await runPoll(cfg);
+		});
+
+		const pending = await readPending(cfg);
+		expect(pending?.count).toBe(0);
+		expect(pending?.acks?.length).toBe(1);
+		expect(pending?.acks?.[0]?.url).toBe(PR_URL);
+		expect(pending?.acks?.[0]?.commentId).toBe(9001);
+	});
+
+	test("only the newest ack per PR is kept", async () => {
+		const cfg = makeConfig(stateDir);
+		const older = "2026-04-20T10:00:00Z";
+		const newer = "2026-04-21T10:00:00Z";
+		const provider = fakeProvider([], {
+			[PR_URL]: [
+				{
+					commentId: 1,
+					createdAt: older,
+					authorLogin: "copilot-swe-agent",
+					bodyExcerpt: "old",
+				},
+				{
+					commentId: 2,
+					createdAt: newer,
+					authorLogin: "copilot-swe-agent",
+					bodyExcerpt: "new",
+				},
+			],
+		});
+		await withFakeProvider(provider, async () => {
+			await runPoll(cfg);
+		});
+
+		const pending = await readPending(cfg);
+		expect(pending?.acks?.length).toBe(1);
+		expect(pending?.acks?.[0]?.commentId).toBe(2);
+		expect(pending?.acks?.[0]?.createdAt).toBe(newer);
+	});
+});

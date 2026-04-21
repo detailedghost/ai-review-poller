@@ -1,4 +1,5 @@
 import { ConfigError } from "./errors.ts";
+import { DEFAULT_NO_FINDINGS_PATTERN } from "./providers/github.ts";
 
 export function requireSrcDir(config: Config): string {
 	if (!config.srcDir) {
@@ -20,6 +21,7 @@ export interface Config {
 	readonly pendingFile: string;
 	readonly dbFile: string;
 	readonly logFile: string;
+	readonly noFindingsPattern: RegExp;
 }
 
 const CADENCE_RE = /^\S+\s+\S+\s+\S+\s+\S+\s+\S+$/;
@@ -68,6 +70,22 @@ export function loadConfig(envRecord: Record<string, string | undefined> = proce
 
 	const providerName = env(envRecord, "REVIEW_LOOP_POLLER_PROVIDER") ?? "github";
 
+	const patternRaw = env(envRecord, "REVIEW_LOOP_POLLER_NO_FINDINGS_PATTERN");
+	let noFindingsPattern: RegExp;
+	if (patternRaw === undefined || patternRaw === "") {
+		noFindingsPattern = DEFAULT_NO_FINDINGS_PATTERN;
+	} else {
+		try {
+			noFindingsPattern = new RegExp(patternRaw, "i");
+		} catch (err) {
+			throw new ConfigError(
+				"config.bad_pattern",
+				`REVIEW_LOOP_POLLER_NO_FINDINGS_PATTERN is not a valid regex: ${err instanceof Error ? err.message : String(err)}`,
+				{ details: { pattern: patternRaw }, cause: err },
+			);
+		}
+	}
+
 	return {
 		srcDir,
 		stateDir,
@@ -78,5 +96,6 @@ export function loadConfig(envRecord: Record<string, string | undefined> = proce
 		pendingFile: `${stateDir}/pending.json`,
 		dbFile: `${stateDir}/seen.db`,
 		logFile: `${stateDir}/log`,
+		noFindingsPattern,
 	} satisfies Config;
 }

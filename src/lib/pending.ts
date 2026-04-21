@@ -9,10 +9,19 @@ export interface PendingPr {
 	submittedAt: string;
 }
 
+export interface PendingAck {
+	url: string;
+	title: string;
+	commentId: number;
+	createdAt: string;
+	bodyExcerpt: string;
+}
+
 export interface Pending {
 	count: number;
 	updatedAt: string;
 	prs: PendingPr[];
+	acks?: PendingAck[];
 	warnings?: string[];
 }
 

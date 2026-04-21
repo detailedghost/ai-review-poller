@@ -1,7 +1,11 @@
 import { ApiError, AuthError, logWarn, NetworkError } from "../errors.ts";
-import type { PullRequest, Review, ReviewProvider } from "./types.ts";
+import type { Ack, FetchOptions, PullRequest, Review, ReviewProvider } from "./types.ts";
 
 const PR_URL_RE = /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/;
+const BODY_EXCERPT_MAX = 240;
+
+export const DEFAULT_NO_FINDINGS_PATTERN =
+	/\bno\s+(?:additional|more|further)?\s*(?:code\s+)?changes\s+(?:are|were|will be)?\s*(?:needed|required|necessary)\b/i;
 
 const GRAPHQL_QUERY = `
 query {
@@ -18,6 +22,14 @@ query {
             state
           }
         }
+        comments(last: 20) {
+          nodes {
+            databaseId
+            createdAt
+            body
+            author { login }
+          }
+        }
       }
     }
   }
@@ -31,10 +43,18 @@ interface GraphQlReviewNode {
 	state: unknown;
 }
 
+interface GraphQlCommentNode {
+	databaseId: unknown;
+	createdAt: unknown;
+	body: unknown;
+	author: { login: unknown } | null | undefined;
+}
+
 interface GraphQlPrNode {
 	url: unknown;
 	title: unknown;
 	reviews: { nodes: GraphQlReviewNode[] } | null | undefined;
+	comments: { nodes: GraphQlCommentNode[] } | null | undefined;
 }
 
 interface GraphQlResponse {
@@ -75,7 +95,22 @@ function parseReview(node: GraphQlReviewNode): Review | null {
 	return { reviewId, submittedAt, authorLogin };
 }
 
-function parsePr(node: GraphQlPrNode): PullRequest | null {
+function parseAck(node: GraphQlCommentNode, ackLogin: string, pattern: RegExp): Ack | null {
+	const commentId = node.databaseId;
+	const createdAt = node.createdAt;
+	const authorLogin = node.author?.login;
+	const body = node.body;
+
+	if (typeof authorLogin !== "string" || authorLogin !== ackLogin) return null;
+	if (typeof body !== "string" || !pattern.test(body)) return null;
+	if (!Number.isFinite(commentId) || typeof commentId !== "number") return null;
+	if (typeof createdAt !== "string") return null;
+
+	const bodyExcerpt = body.slice(0, BODY_EXCERPT_MAX);
+	return { commentId, createdAt, authorLogin, bodyExcerpt };
+}
+
+function parsePr(node: GraphQlPrNode, ackLogin: string, pattern: RegExp): PullRequest | null {
 	const url = node.url;
 	const title = node.title;
 
@@ -97,7 +132,14 @@ function parsePr(node: GraphQlPrNode): PullRequest | null {
 		if (review !== null) reviews.push(review);
 	}
 
-	return { url, title, reviews };
+	const commentNodes = node.comments?.nodes ?? [];
+	const acks: Ack[] = [];
+	for (const cn of commentNodes) {
+		const ack = parseAck(cn, ackLogin, pattern);
+		if (ack !== null) acks.push(ack);
+	}
+
+	return { url, title, reviews, acks };
 }
 
 async function getToken(): Promise<string> {
@@ -120,7 +162,8 @@ async function getToken(): Promise<string> {
 	return token;
 }
 
-async function fetchOpenPullRequests(token: string): Promise<PullRequest[]> {
+async function fetchOpenPullRequests(token: string, options: FetchOptions = {}): Promise<PullRequest[]> {
+	const pattern = options.noFindingsPattern ?? DEFAULT_NO_FINDINGS_PATTERN;
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), 30_000);
 
@@ -187,7 +230,7 @@ async function fetchOpenPullRequests(token: string): Promise<PullRequest[]> {
 
 	const prs: PullRequest[] = [];
 	for (const node of nodes) {
-		const pr = parsePr(node as GraphQlPrNode);
+		const pr = parsePr(node as GraphQlPrNode, githubProvider.botAckLogin, pattern);
 		if (pr !== null) prs.push(pr);
 	}
 	return prs;
@@ -196,6 +239,7 @@ async function fetchOpenPullRequests(token: string): Promise<PullRequest[]> {
 export const githubProvider: ReviewProvider = {
 	name: "github",
 	botReviewerLogin: "copilot-pull-request-reviewer",
+	botAckLogin: "copilot-swe-agent",
 	getToken,
 	fetchOpenPullRequests,
 };

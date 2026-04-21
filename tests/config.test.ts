@@ -207,3 +207,28 @@ describe("config — validation: bad_stale", () => {
 		expect(cfg.staleMinutes).toBe(1);
 	});
 });
+
+describe("config — noFindingsPattern", () => {
+	test("defaults to a case-insensitive 'no additional code changes' matcher", () => {
+		const cfg = loadConfig(mockEnv());
+		expect(cfg.noFindingsPattern.test("No additional code changes were needed")).toBe(true);
+		expect(cfg.noFindingsPattern.test("Found 3 issues")).toBe(false);
+	});
+
+	test("honors REVIEW_LOOP_POLLER_NO_FINDINGS_PATTERN override", () => {
+		const cfg = loadConfig(mockEnv({ REVIEW_LOOP_POLLER_NO_FINDINGS_PATTERN: "^lgtm$" }));
+		expect(cfg.noFindingsPattern.test("LGTM")).toBe(true);
+		expect(cfg.noFindingsPattern.test("No additional code changes were needed")).toBe(false);
+	});
+
+	test("throws ConfigError on invalid regex", () => {
+		let caught: unknown;
+		try {
+			loadConfig(mockEnv({ REVIEW_LOOP_POLLER_NO_FINDINGS_PATTERN: "[" }));
+		} catch (e) {
+			caught = e;
+		}
+		expect(caught).toBeInstanceOf(ConfigError);
+		expect((caught as ConfigError).code).toBe("config.bad_pattern");
+	});
+});

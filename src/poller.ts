@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import type { Config } from "./config.ts";
 import { DbError, logInfo, logWarn, StateError, setLogStateDir } from "./errors.ts";
 import { openDb } from "./lib/db.ts";
-import type { PendingPr } from "./lib/pending.ts";
+import type { PendingAck, PendingPr } from "./lib/pending.ts";
 import { writePending } from "./lib/pending.ts";
 import { resolve } from "./providers/index.ts";
 
@@ -22,7 +22,9 @@ export async function runPoll(config: Config): Promise<void> {
 
 	const token = await provider.getToken();
 
-	const pullRequests = await provider.fetchOpenPullRequests(token);
+	const pullRequests = await provider.fetchOpenPullRequests(token, {
+		noFindingsPattern: config.noFindingsPattern,
+	});
 
 	using db = openDb(config.dbFile);
 
@@ -80,16 +82,38 @@ export async function runPoll(config: Config): Promise<void> {
 		insertAll();
 	}
 
+	// Acks are refreshed on every poll (no dedup). Keep only the newest ack
+	// per PR so consumers see the current close-out signal, not a history.
+	const latestAckByUrl = new Map<string, PendingAck>();
+	for (const pr of pullRequests) {
+		for (const ack of pr.acks ?? []) {
+			const existing = latestAckByUrl.get(pr.url);
+			if (existing === undefined || ack.createdAt > existing.createdAt) {
+				latestAckByUrl.set(pr.url, {
+					url: pr.url,
+					title: pr.title,
+					commentId: ack.commentId,
+					createdAt: ack.createdAt,
+					bodyExcerpt: ack.bodyExcerpt,
+				});
+			}
+		}
+	}
+	const acks = Array.from(latestAckByUrl.values());
+
 	const pending = {
 		count: newPrs.length,
 		updatedAt: now,
 		prs: newPrs,
+		...(acks.length > 0 ? { acks } : {}),
 	};
 
 	await writePending(config, pending);
 
 	if (newPrs.length > 0) {
 		logInfo(`poll: ${newPrs.length} new review(s) found`);
+	} else if (acks.length > 0) {
+		logInfo(`poll: no new reviews; ${acks.length} no-findings ack(s) tracked`);
 	} else {
 		logWarn("poll: no new reviews; heartbeat written");
 	}

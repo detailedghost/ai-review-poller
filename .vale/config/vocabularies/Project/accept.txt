@@ -64,3 +64,6 @@ API
 repos
 deduplication
 walkthrough
+ack
+acks
+jq

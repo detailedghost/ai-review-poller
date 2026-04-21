@@ -140,10 +140,28 @@ GATE: `roundsDone < maxRounds`.
 ## Phase 3 — State Decision
 
 IN: `roundsDone`.
-OUT: next action: `trigger` | `act` | `wait`.
+OUT: next action: `close-no-findings` | `trigger` | `act` | `wait`.
+
+1. **No-findings close-out check** — Before anything else, inspect
+   `$REVIEW_LOOP_POLLER_STATE_DIR/pending.json`
+   (default `/tmp/claude/review-loop-poller/pending.json`) for an entry
+   in the top-level `acks` array whose `url` equals `prUrl` and whose
+   `createdAt` is **strictly newer** than `lastCommitTs`
+   (`git log -1 --format=%cI HEAD`):
+
+   ```bash
+   jq --arg url "$prUrl" --arg since "$lastCommitTs" '
+     [.acks[]? | select(.url == $url) | select(.createdAt > $since)] | last
+   ' pending.json
+   ```
+
+   When a matching acknowledgment entry turns up, action is
+   `close-no-findings`. Otherwise continue.
 
 1. When `roundsDone == 0` → action `trigger`.
+
 1. Otherwise run `address-helper.sh fetch-copilot-review`.
+
    - `submittedAt == null` → `wait`.
    - Let `latestReviewTs = submittedAt` and
      `lastCommitTs = git log -1 --format=%cI origin/<branch>` (fall
@@ -152,6 +170,24 @@ OUT: next action: `trigger` | `act` | `wait`.
    - Otherwise → action `wait`.
 
 Branches below execute based on this decision.
+
+### 3z. Action `close-no-findings`
+
+Copilot reviewed via an issue-comment acknowledgment (posted by
+`copilot-swe-agent`) that the poller matched against the no-findings
+pattern. Nothing actionable — close the loop cleanly.
+
+1. Print:
+
+   ```text
+   review-loop: Copilot reviewed via comment, no findings — closing loop.
+   comment: <bodyExcerpt>
+   ```
+
+   Use the `bodyExcerpt` from the matched acknowledgment entry.
+
+1. Exit 0. Do not invoke the antagonist, `/address`, or re-trigger.
+   The round counter is not consumed.
 
 ### 3a. Action `trigger`
 
@@ -371,7 +407,11 @@ a wait-then-continue loop.
    - exit 0 → a Copilot review with `submittedAt > sinceIso` has been
      observed in `pending.json`. Fall through to step 3.
 
-   - exit 124 → timeout. Print:
+   - exit 124 → timeout. Before exiting, re-check `pending.json` for a
+     no-findings acknowledgment on `prUrl` newer than `sinceIso` (same
+     `jq` filter as Phase 3, but `createdAt > sinceIso`). When one
+     matches, treat this as a clean close-out: print the Phase 3z
+     message and exit 0. Otherwise print:
 
      ```text
      review-loop: auto wait timed out after <M> min without a new
@@ -401,6 +441,7 @@ GATE: round cap hit, wait timeout, or hard error.
 | No open PR | Exit 0 with message (skip) |
 | Copilot unavailable | Exit 0 with message (skip) |
 | Max rounds reached | Exit 0 with summary |
+| Copilot posted a no-findings acknowledgment comment | Exit 0 with close-out message (Phase 3z) |
 | Antagonist returned malformed JSON | Exit 1, print raw output |
 | `/address` failed | Exit 1, no re-trigger — round not consumed |
 | `request-copilot` posts a duplicate `@copilot review` comment | Treated as success (Copilot ignores repeat triggers without new commits) |

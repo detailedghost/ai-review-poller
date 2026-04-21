@@ -5,7 +5,7 @@
 
 import { chmodSync, mkdirSync, readFileSync } from "node:fs";
 import type { LogEntry } from "../src/errors.ts";
-import type { PullRequest, Review, ReviewProvider } from "../src/providers/types.ts";
+import type { Ack, PullRequest, Review, ReviewProvider } from "../src/providers/types.ts";
 
 // ---------------------------------------------------------------------------
 // scratchStateDir
@@ -58,7 +58,7 @@ export interface FakePrInput {
  * All PRs are returned by fetchOpenPullRequests; filtering by botReviewerLogin
  * happens in the poller (not the provider), matching the real architecture.
  */
-export function fakeProvider(reviews: FakePrInput[]): ReviewProvider {
+export function fakeProvider(reviews: FakePrInput[], acksByUrl: Record<string, Ack[]> = {}): ReviewProvider {
 	// Group reviews by pr_url
 	const prMap = new Map<string, { title: string; reviews: Review[] }>();
 	for (const r of reviews) {
@@ -73,15 +73,24 @@ export function fakeProvider(reviews: FakePrInput[]): ReviewProvider {
 		});
 	}
 
+	// Also include any PRs that have acks but no reviews.
+	for (const url of Object.keys(acksByUrl)) {
+		if (!prMap.has(url)) {
+			prMap.set(url, { title: `PR at ${url}`, reviews: [] });
+		}
+	}
+
 	const prs: PullRequest[] = Array.from(prMap.entries()).map(([url, data]) => ({
 		url,
 		title: data.title,
 		reviews: data.reviews,
+		acks: acksByUrl[url],
 	}));
 
 	return {
 		name: "fake",
 		botReviewerLogin: "copilot-pull-request-reviewer",
+		botAckLogin: "copilot-swe-agent",
 		async getToken(): Promise<string> {
 			return "ghp_FAKE_TOKEN_FOR_TESTS";
 		},

@@ -79,3 +79,13 @@ helper — callers never construct `[bot] ...` themselves.
 - **Token-efficient.** Hand the antagonist agent only the Copilot
   comments JSON path + (optionally) the spec path. Do not forward
   conversation context.
+
+### No-findings close-out
+
+When Copilot replies to an `@copilot review` with an issue comment
+(authored by `copilot-swe-agent`) matching the poller's no-findings
+pattern — e.g. "No additional code changes were needed" — the poller
+records it in `pending.json` under a top-level `acks` array. The skill
+reads that array in Phase 3 and exits cleanly with a close-out message,
+skipping the antagonist / `/address` / re-trigger work. Override the
+match pattern per host via `REVIEW_LOOP_POLLER_NO_FINDINGS_PATTERN`.

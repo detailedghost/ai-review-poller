@@ -111,6 +111,99 @@ describe("github provider — happy path", () => {
 	});
 });
 
+describe("github provider — no-findings acks", () => {
+	function mockFetchWithComments(comments: Array<Record<string, unknown>>) {
+		mockFetch({
+			data: {
+				viewer: {
+					pullRequests: {
+						nodes: [
+							{
+								url: "https://github.com/owner/repo/pull/9",
+								title: "Ack PR",
+								reviews: { nodes: [] },
+								comments: { nodes: comments },
+							},
+						],
+					},
+				},
+			},
+		});
+	}
+
+	test("copilot-swe-agent comment matching default pattern produces an ack", async () => {
+		mockFetchWithComments([
+			{
+				databaseId: 4001,
+				createdAt: "2026-04-21T15:00:12Z",
+				body: "Reviewed this PR state at commit abc. No additional code changes were needed.",
+				author: { login: "copilot-swe-agent" },
+			},
+		]);
+		const prs = await githubProvider.fetchOpenPullRequests("tok");
+		expect(prs[0]?.acks?.length).toBe(1);
+		expect(prs[0]?.acks?.[0]?.commentId).toBe(4001);
+		expect(prs[0]?.acks?.[0]?.authorLogin).toBe("copilot-swe-agent");
+		expect(prs[0]?.acks?.[0]?.createdAt).toBe("2026-04-21T15:00:12Z");
+	});
+
+	test("comment body that does not match pattern is ignored", async () => {
+		mockFetchWithComments([
+			{
+				databaseId: 4002,
+				createdAt: "2026-04-21T15:00:12Z",
+				body: "Reviewed. Found 3 issues — see inline comments.",
+				author: { login: "copilot-swe-agent" },
+			},
+		]);
+		const prs = await githubProvider.fetchOpenPullRequests("tok");
+		expect(prs[0]?.acks?.length ?? 0).toBe(0);
+	});
+
+	test("matching comment from a non-bot author is ignored", async () => {
+		mockFetchWithComments([
+			{
+				databaseId: 4003,
+				createdAt: "2026-04-21T15:00:12Z",
+				body: "No additional code changes were needed",
+				author: { login: "detailedghost" },
+			},
+		]);
+		const prs = await githubProvider.fetchOpenPullRequests("tok");
+		expect(prs[0]?.acks?.length ?? 0).toBe(0);
+	});
+
+	test("custom noFindingsPattern overrides the default", async () => {
+		mockFetchWithComments([
+			{
+				databaseId: 4004,
+				createdAt: "2026-04-21T15:00:12Z",
+				body: "LGTM — all clear",
+				author: { login: "copilot-swe-agent" },
+			},
+		]);
+		const prs = await githubProvider.fetchOpenPullRequests("tok", {
+			noFindingsPattern: /lgtm/i,
+		});
+		expect(prs[0]?.acks?.length).toBe(1);
+		expect(prs[0]?.acks?.[0]?.commentId).toBe(4004);
+	});
+
+	test("bodyExcerpt is capped at 240 chars", async () => {
+		const long = "No additional code changes were needed. ".padEnd(500, "x");
+		mockFetchWithComments([
+			{
+				databaseId: 4005,
+				createdAt: "2026-04-21T15:00:12Z",
+				body: long,
+				author: { login: "copilot-swe-agent" },
+			},
+		]);
+		const prs = await githubProvider.fetchOpenPullRequests("tok");
+		expect(prs[0]?.acks?.[0]?.bodyExcerpt.length).toBe(240);
+	});
+});
+
 describe("github provider — error paths", () => {
 	test("malformed body (not JSON) throws ApiError api.malformed_body", async () => {
 		globalThis.fetch = (async () => new Response("not-json", { status: 200 })) as unknown as typeof fetch;
