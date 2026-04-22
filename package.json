@@ -1,6 +1,6 @@
 {
 	"name": "ai-review-poller",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Cron-driven Bun binary that polls GitHub (extensible to other hosts) for Copilot PR reviews and writes a status file a Claude Code statusline reads.",
 	"type": "module",
 	"license": "MIT",
